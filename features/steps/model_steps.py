@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-from behave import step, then
+from behave import given, step, then
 from behave.runner import Context
 from playwright.sync_api import expect
 
-from features.util import exists_model, get_model
+from features.util import exists_model, get_model, run_async_orm
 
 
 @then('User model with email "{email}" should exist with "{user_role}" user role')
@@ -79,6 +79,109 @@ def confirm_assessment_status(context: Context, expected_state: str):
     page = context.page
     # Confirm we have the correct reference displayed on the page.
     expect(page.locator("strong#reference_number").filter(has_text=assessment.reference)).to_be_visible()
+
+
+@given("azure seed assessment exists")
+def seed_azure_assessment(context: Context):
+    """
+    Create or update seed data without deleting anything.
+    Override defaults with -D arguments, e.g.:
+      -D seed_org_name="Bristol City Council"
+      -D seed_org_type="Other"
+      -D seed_system_name="System 1"
+      -D seed_user_email="other@example.gov.uk"
+      -D seed_user_role="Organisation lead"
+      -D seed_assessment_period="25/26"
+      -D seed_status="draft"
+      -D seed_caf_profile="enhanced"
+      -D seed_framework="caf32"
+      -D seed_review_type="peer_review"
+      -D seed_data_file="alice_completed_assessment.json"
+    """
+    from django.contrib.auth.models import User
+
+    from webcaf.webcaf.models import Assessment, Organisation, System, UserProfile
+
+    userdata = context.config.userdata
+    org_name = userdata.get("seed_org_name", "Ministry of Agriculture")
+    org_type_input = userdata.get("seed_org_type", "Ministerial department")
+    system_name = userdata.get("seed_system_name", "System 1")
+    user_email = userdata.get("seed_user_email", "other@example.gov.uk")
+    user_role_input = userdata.get("seed_user_role", "Organisation lead")
+    period = userdata.get("seed_assessment_period", "25/26")
+    status = userdata.get("seed_status", "draft")
+    caf_profile = userdata.get("seed_caf_profile", "enhanced")
+    framework = userdata.get("seed_framework", "caf32")
+    review_type = userdata.get("seed_review_type", "peer_review")
+    data_file = userdata.get("seed_data_file", "alice_completed_assessment.json")
+
+    def resolve_org_type(value: str) -> str:
+        org_type_ids = {choice[0] for choice in Organisation.ORGANISATION_TYPE_CHOICES}
+        if value in org_type_ids:
+            return value
+        return Organisation.get_type_id(value) or "other"
+
+    def resolve_role(value: str) -> str:
+        role_ids = {choice[0] for choice in UserProfile.ROLE_CHOICES}
+        if value in role_ids:
+            return value
+        return UserProfile.get_role_id(value) or "organisation_lead"
+
+    def load_assessment_data() -> dict:
+        if not data_file:
+            return {}
+        file_path = Path(__file__).parent.parent / "data" / data_file
+        if not file_path.exists():
+            return {}
+        with open(file_path, "r") as f:
+            return json.loads(f.read())
+
+    def seed():
+        org_type = resolve_org_type(org_type_input)
+        role = resolve_role(user_role_input)
+        assessments_data = load_assessment_data()
+
+        organisation, _ = Organisation.objects.get_or_create(name=org_name)
+        if organisation.organisation_type != org_type:
+            organisation.organisation_type = org_type
+            organisation.save(update_fields=["organisation_type"])
+
+        system, _ = System.objects.get_or_create(name=system_name, organisation=organisation)
+
+        user, _ = User.objects.get_or_create(username=user_email, defaults={"email": user_email})
+        if user.email != user_email:
+            user.email = user_email
+            user.save(update_fields=["email"])
+
+        profile, _ = UserProfile.objects.get_or_create(user=user, organisation=organisation, defaults={"role": role})
+        if profile.organisation_id != organisation.id or profile.role != role:
+            profile.organisation = organisation
+            profile.role = role
+            profile.save(update_fields=["organisation", "role"])
+
+        assessment, created = Assessment.objects.get_or_create(
+            system=system,
+            assessment_period=period,
+            status=status,
+            defaults={
+                "caf_profile": caf_profile,
+                "review_type": review_type,
+                "framework": framework,
+                "assessments_data": assessments_data,
+                "created_by": user,
+                "last_updated_by": user,
+            },
+        )
+        if not created:
+            assessment.caf_profile = caf_profile
+            assessment.review_type = review_type
+            assessment.framework = framework
+            assessment.assessments_data = assessments_data
+            assessment.created_by = user
+            assessment.last_updated_by = user
+            assessment.save()
+
+    run_async_orm(seed)
 
 
 @then(

@@ -67,12 +67,6 @@ INSTALLED_APPS = [
     "axes",
 ]
 
-AUTHENTICATION_BACKENDS = (
-    "webcaf.auth.OIDCBackend",
-    "axes.backends.AxesStandaloneBackend",
-    "django.contrib.auth.backends.ModelBackend",
-)
-
 MIDDLEWARE = [
     "csp.middleware.CSPMiddleware",
     "django.middleware.security.SecurityMiddleware",
@@ -258,9 +252,9 @@ LOGGING = {
     },
 }
 
-SSO_MODE = env.str("SSO_MODE", "external")  # or dex or local or none
+SSO_MODE = env.str("SSO_MODE", "external").lower()  # external, dex, local, none
 
-if SSO_MODE.lower() == "external":
+if SSO_MODE == "external":
     OIDC_RP_CLIENT_ID = env.str("OIDC_RP_CLIENT_ID")
     OIDC_RP_CLIENT_SECRET = env.str("OIDC_RP_CLIENT_SECRET")  # pragma: allowlist secret
     OIDC_OP_AUTHORIZATION_ENDPOINT = env.str("OIDC_OP_AUTHORIZATION_ENDPOINT")
@@ -274,6 +268,18 @@ if SSO_MODE.lower() == "external":
     NOTIFY_API_KEY = env.str("NOTIFY_API_KEY", "")
     NOTIFY_OTP_TEMPLATE_ID = env.str("NOTIFY_OTP_TEMPLATE_ID", "")
     ENABLED_2FA = env.bool("ENABLED_2FA", default=True)
+elif SSO_MODE == "none":
+    # Local Django auth only; do not configure OIDC endpoints.
+    LOGIN_URL = env.str("LOGIN_URL", "/admin/login/")
+    LOGOUT_REDIRECT_URL = env.str("LOGOUT_REDIRECT_URL", "/")
+    OIDC_RP_CLIENT_ID = ""
+    OIDC_RP_CLIENT_SECRET = ""
+    OIDC_OP_AUTHORIZATION_ENDPOINT = ""
+    OIDC_OP_TOKEN_ENDPOINT = ""
+    OIDC_OP_USER_ENDPOINT = ""
+    OIDC_OP_JWKS_ENDPOINT = ""
+    OIDC_OP_LOGOUT_ENDPOINT = ""
+    ENABLED_2FA = False
 else:
     sso_host = "dex" if SSO_MODE == "dex" else "localhost"
     OIDC_RP_CLIENT_ID = "my-django-app"
@@ -293,12 +299,31 @@ else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
     ENABLED_2FA = False
 
+if SSO_MODE == "none":
+    AUTHENTICATION_BACKENDS = (
+        "axes.backends.AxesStandaloneBackend",
+        "django.contrib.auth.backends.ModelBackend",
+    )
+else:
+    AUTHENTICATION_BACKENDS = (
+        "webcaf.auth.OIDCBackend",
+        "axes.backends.AxesStandaloneBackend",
+        "django.contrib.auth.backends.ModelBackend",
+    )
+
 # Confirmation email template ID
 # System will not send a confirmation email if this is not set
 NOTIFY_CONFIRMATION_TEMPLATE_ID = env.str("NOTIFY_CONFIRMATION_TEMPLATE_ID", "")
 
 OIDC_RP_SCOPES = env.str("OIDC_RP_SCOPES", "openid email profile")
 OIDC_RP_SIGN_ALGO = env.str("OIDC_RP_SIGN_ALGO", "RS256")
+OIDC_TOKEN_AUTH_METHOD = env.str("OIDC_TOKEN_AUTH_METHOD", "client_secret_basic")
+OIDC_CLIENT_ASSERTION_PRIVATE_KEY = env.str("OIDC_CLIENT_ASSERTION_PRIVATE_KEY", default="")
+OIDC_CLIENT_ASSERTION_KID = env.str("OIDC_CLIENT_ASSERTION_KID", default="")
+OIDC_CLIENT_ASSERTION_ALG = env.str("OIDC_CLIENT_ASSERTION_ALG", default="RS256")
+OIDC_USER_AGENT = env.str("OIDC_USER_AGENT", default="webcaf/1.0")
+OIDC_RELAX_CLAIMS = env.bool("OIDC_RELAX_CLAIMS", default=False)
+OIDC_DEBUG_CLAIMS = env.bool("OIDC_DEBUG_CLAIMS", default=False)
 if DEBUG:
     OIDC_VERIFY_SSL = False
 

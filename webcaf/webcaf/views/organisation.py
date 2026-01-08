@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.forms import ModelForm
 from django.shortcuts import redirect, render
@@ -53,7 +54,7 @@ class OrganisationView(LoginRequiredMixin, FormView):
     :type login_url: str
     """
 
-    login_url = "/oidc/authenticate/"  # OIDC login route
+    login_url = settings.LOGIN_URL
 
     def get_context_data(self, **kwargs):
         data = super().get_context_data(**kwargs)
@@ -144,7 +145,7 @@ class ChangeActiveProfileView(LoginRequiredMixin, TemplateView):
     """
 
     template_name = "user-pages/change-organisation.html"
-    login_url = "/oidc/authenticate/"  # OIDC login route
+    login_url = settings.LOGIN_URL
 
     def get_context_data(self, **kwargs):
         data = super().get_context_data(**kwargs)

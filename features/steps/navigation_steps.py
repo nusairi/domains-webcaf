@@ -62,6 +62,18 @@ def click_link_with_text(context: Context, text: str):
     page.get_by_role("link", name=text, exact=True).click()
 
 
+@step('click link containing text "{text}"')
+def click_link_containing_text(context: Context, text: str):
+    """
+    Click a link by partial match.
+    :type context:Context
+    """
+    if "think_time" in context:
+        sleep(context.think_time)
+    page = context.page
+    page.get_by_role("link", name=re.compile(text)).click()
+
+
 @step('click link in summary card row "{key}" with text "{text}"')
 def click_summary_card_link_with_text(context: Context, key: str, text: str):
     page = context.page

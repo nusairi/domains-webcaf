@@ -6,11 +6,15 @@ for enforcing authentication requirements across the application.
 """
 
 import logging
+import time
+import uuid
 
 from django.conf import settings
 from django.shortcuts import redirect
 from django.urls import reverse
 from mozilla_django_oidc.auth import OIDCAuthenticationBackend
+import jwt
+import requests
 
 from webcaf.webcaf.utils import mask_email
 
@@ -28,6 +32,114 @@ class OIDCBackend(OIDCAuthenticationBackend):
     """
 
     logger = logging.getLogger("OIDCBackend")
+
+    def _get_identifier(self, claims):
+        """
+        Resolve a stable user identifier from OIDC claims.
+        Prefer email, then preferred_username/upn, then sub.
+        """
+        return (
+            claims.get("email")
+            or claims.get("preferred_username")
+            or claims.get("upn")
+            or claims.get("sub")
+        )
+
+    def verify_claims(self, claims):
+        """
+        Allow Azure AD users that don't return an email claim.
+        """
+        if getattr(settings, "OIDC_DEBUG_CLAIMS", False):
+            identifier = self._get_identifier(claims)
+            aud = claims.get("aud")
+            self.logger.warning(
+                "OIDC claims debug: keys=%s aud=%s email=%s preferred_username=%s upn=%s identifier=%s",
+                sorted(claims.keys()),
+                aud,
+                bool(claims.get("email")),
+                bool(claims.get("preferred_username")),
+                bool(claims.get("upn")),
+                bool(identifier),
+            )
+        if getattr(settings, "OIDC_RELAX_CLAIMS", False):
+            identifier = self._get_identifier(claims)
+            aud = claims.get("aud")
+            if aud is None:
+                aud_ok = True
+            elif isinstance(aud, list):
+                aud_ok = settings.OIDC_RP_CLIENT_ID in aud
+            else:
+                aud_ok = aud == settings.OIDC_RP_CLIENT_ID
+            return bool(identifier and aud_ok)
+
+        if super().verify_claims(claims):
+            return True
+
+        # If email is missing, accept preferred_username/upn when the audience matches.
+        if not claims.get("email"):
+            identifier = self._get_identifier(claims)
+            aud = claims.get("aud")
+            if isinstance(aud, list):
+                aud_ok = settings.OIDC_RP_CLIENT_ID in aud
+            else:
+                aud_ok = aud == settings.OIDC_RP_CLIENT_ID
+            return bool(identifier and aud_ok)
+
+        return False
+
+    def _get_client_assertion(self):
+        private_key = settings.OIDC_CLIENT_ASSERTION_PRIVATE_KEY
+        if not private_key:
+            raise ValueError("OIDC_CLIENT_ASSERTION_PRIVATE_KEY is not configured")
+        # Handle escaped newlines if provided via env var.
+        private_key = private_key.replace("\\n", "\n").replace("\r", "")
+        if getattr(settings, "OIDC_DEBUG_CLAIMS", False):
+            first_line = private_key.splitlines()[0] if private_key else ""
+            self.logger.warning("OIDC client assertion key header: %s", first_line)
+        now = int(time.time())
+        payload = {
+            "aud": settings.OIDC_OP_TOKEN_ENDPOINT,
+            "iss": settings.OIDC_RP_CLIENT_ID,
+            "sub": settings.OIDC_RP_CLIENT_ID,
+            "exp": now + 300,
+            "iat": now,
+            "jti": uuid.uuid4().hex,
+        }
+        headers = {"typ": "JWT"}
+        if settings.OIDC_CLIENT_ASSERTION_KID:
+            headers["kid"] = settings.OIDC_CLIENT_ASSERTION_KID
+        return jwt.encode(payload, private_key, algorithm=settings.OIDC_CLIENT_ASSERTION_ALG, headers=headers)
+
+    def get_token(self, payload):
+        if settings.OIDC_TOKEN_AUTH_METHOD != "private_key_jwt":
+            return super().get_token(payload)
+
+        data = dict(payload)
+        data["client_id"] = settings.OIDC_RP_CLIENT_ID
+        data["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        data["client_assertion"] = self._get_client_assertion()
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": settings.OIDC_USER_AGENT,
+        }
+        response = requests.post(settings.OIDC_OP_TOKEN_ENDPOINT, data=data, headers=headers, timeout=10)
+        if getattr(settings, "OIDC_DEBUG_CLAIMS", False):
+            self.logger.warning(
+                "OIDC token error: status=%s body=%s",
+                response.status_code,
+                response.text,
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def get_userinfo(self, access_token, id_token, payload):
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": settings.OIDC_USER_AGENT,
+        }
+        response = requests.get(settings.OIDC_OP_USER_ENDPOINT, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
 
     def create_user(self, claims):
         """
@@ -52,10 +164,12 @@ class OIDCBackend(OIDCAuthenticationBackend):
                 'name': 'John Doe'
             }
         """
-        self.logger.info(mask_email(f"Create user for {claims.get('email')}"))
+        identifier = self._get_identifier(claims)
+        self.logger.info(mask_email(f"Create user for {identifier}"))
         user = super().create_user(claims)
-        user.email = claims.get("email")
-        user.username = claims.get("email")
+        if identifier and "@" in identifier:
+            user.email = claims.get("email") or identifier
+        user.username = identifier
         user.first_name = claims.get("given_name", claims.get("name", ""))
         user.last_name = claims.get("family_name", "")
         user.save()
@@ -81,6 +195,10 @@ class OIDCBackend(OIDCAuthenticationBackend):
             Falls back to existing user values if claims are missing or empty.
         """
         self.logger.info(mask_email(f"User  {user.id} {user.email} logged in to the system"))
+        identifier = self._get_identifier(claims)
+        if identifier and "@" in identifier:
+            user.email = claims.get("email") or identifier
+        user.username = identifier or user.username
         user.first_name = claims.get("given_name", user.first_name) or claims.get("name", user.first_name)
         user.last_name = claims.get("family_name", user.last_name)
         user.save()
@@ -125,6 +243,9 @@ class LoginRequiredMiddleware:
             "/session-expired/",
             "/logout/",
         ]
+        login_url = getattr(settings, "LOGIN_URL", "")
+        if login_url and login_url not in self.exempt_url_prefixes:
+            self.exempt_url_prefixes.append(login_url)
         self.exempt_exact_urls = [
             # index page
             "/"
@@ -158,6 +279,8 @@ class LoginRequiredMiddleware:
                     self.logger.info("Session expired while submitting 2FA token. Redirecting to session-expired")
                     return redirect("session-expired")
                 self.logger.debug("Force authentication for %s", request.path)
+                if getattr(settings, "SSO_MODE", "external").lower() == "none":
+                    return redirect(settings.LOGIN_URL)
                 return redirect("oidc_authentication_init")
 
             # If the user is authenticated, check if they're verified'

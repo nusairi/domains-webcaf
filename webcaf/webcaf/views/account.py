@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import render
 from django.urls import reverse
@@ -19,7 +20,7 @@ class AccountView(LoginRequiredMixin, TemplateView):
     """
 
     template_name = "user-pages/my-account.html"
-    login_url = "/oidc/authenticate/"  # OIDC login route
+    login_url = settings.LOGIN_URL
 
     def get_context_data(self, **kwargs):
         """

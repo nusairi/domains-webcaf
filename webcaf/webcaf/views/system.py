@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.forms import ChoiceField, ModelForm
@@ -85,7 +86,7 @@ class SystemContextDataMixin:
 
 class SystemView(UserRoleCheckMixin, SystemContextDataMixin, FormView):
     template_name = "system/system.html"
-    login_url = "/oidc/authenticate/"
+    login_url = settings.LOGIN_URL
     success_url = "/view-systems/"
     form_class = SystemForm
 
@@ -139,7 +140,7 @@ class EditSystemView(SystemContextDataMixin, UserRoleCheckMixin, UpdateView):
 
 class ViewSystemsView(LoginRequiredMixin, TemplateView):
     template_name = "system/systems.html"
-    login_url = "/oidc/authenticate/"
+    login_url = settings.LOGIN_URL
     success_url = "/systems/"
 
     def get_context_data(self, **kwargs):

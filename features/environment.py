@@ -32,6 +32,11 @@ def before_scenario(context, scenario):
     # Also clear storage for all origins
     context.page.context.add_cookies([])  # Wipe all cookies
 
+    skip_db_cleanup = context.config.userdata.get("skip_db_cleanup", "false").lower() == "true"
+    if skip_db_cleanup:
+        print("Skipping DB cleanup (skip_db_cleanup=true).")
+        return
+
     def clear_db():
         print("****************** Clearing DB *****************************")
         from webcaf.webcaf.models import Assessment, Organisation, UserProfile

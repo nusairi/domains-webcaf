@@ -1,3 +1,4 @@
+import re
 from time import sleep
 
 from behave import given, step, then
@@ -128,12 +129,53 @@ def user_logging_in(context, user_name, password):
     context.current_email = user_name
 
 
+@step("the user logs in with azure oidc")
+def user_logging_in_with_azure_oidc(context):
+    page = context.page
+    user_name = context.config.userdata.get("oidc_username")
+    password = context.config.userdata.get("oidc_password")
+    if not user_name or not password:
+        raise RuntimeError("Set -D oidc_username and -D oidc_password to use Azure OIDC login.")
+
+    page.get_by_text("Sign in").click()
+
+    # Azure login flow (best effort; MFA will break automation).
+    if page.locator("input[name='loginfmt']").is_visible():
+        page.locator("input[name='loginfmt']").fill(user_name)
+        page.locator("input[type='submit']").click()
+    elif page.locator("input[type='email']").is_visible():
+        page.locator("input[type='email']").fill(user_name)
+        page.locator("input[type='submit']").click()
+
+    if page.locator("input[name='passwd']").is_visible():
+        page.locator("input[name='passwd']").fill(password)
+        page.locator("input[type='submit']").click()
+
+    # Handle "Stay signed in?" prompt if it appears.
+    if page.locator("input#idSIButton9").is_visible():
+        page.locator("input#idSIButton9").click()
+
+    # Consent screen (if required).
+    if page.get_by_role("button", name=re.compile(r"(grant access|accept)", re.I)).is_visible():
+        page.get_by_role("button", name=re.compile(r"(grant access|accept)", re.I)).click()
+
+    context.current_email = user_name
+
+
 @then('they should see page title "{page_title}"')
 def check_page_title(context, page_title):
     if "think_time" in context:
         sleep(context.think_time)
     page = context.page
     expect(page).to_have_title(page_title)
+
+
+@then('page title contains "{page_text}"')
+def check_page_title_contains(context, page_text):
+    if "think_time" in context:
+        sleep(context.think_time)
+    page = context.page
+    expect(page).to_have_title(re.compile(re.escape(page_text)))
 
 
 @then('page contains text "{page_text}" in banner')

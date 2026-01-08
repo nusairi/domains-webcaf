@@ -1,6 +1,7 @@
 import logging
 
 from django import forms
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Subquery
 from django.shortcuts import redirect
@@ -37,7 +38,7 @@ class EditAssessmentView(LoginRequiredMixin, FormView):
     :type template_name: str
     """
 
-    login_url = "/oidc/authenticate/"
+    login_url = settings.LOGIN_URL
     template_name = "assessment/draft-assessment.html"
     logger = logging.Logger("EditAssessmentView")
 
@@ -321,7 +322,7 @@ class CreateAssessmentView(LoginRequiredMixin, FormView):
     :type template_name: str
     """
 
-    login_url = "/oidc/authenticate/"  # OIDC login route
+    login_url = settings.LOGIN_URL
     template_name = "assessment/draft-assessment.html"
     logger = logging.Logger("CreateAssessmentView")
     form_class = BaseAssessmentForm

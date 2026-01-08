@@ -1,5 +1,6 @@
 import logging
 
+from django.conf import settings
 from django import forms
 from django.contrib.auth.models import User
 from django.shortcuts import redirect, render
@@ -23,7 +24,7 @@ class AddNewUserForm(forms.Form):
 
 class UserProfilesView(UserRoleCheckMixin, FormView):
     template_name = "users/users.html"
-    login_url = "/oidc/authenticate/"
+    login_url = settings.LOGIN_URL
     form_class = AddNewUserForm
 
     def get_allowed_roles(self) -> list[str]:
@@ -40,7 +41,7 @@ class UserProfilesView(UserRoleCheckMixin, FormView):
 
 class UserProfileView(UserRoleCheckMixin, FormView):
     template_name = "users/user.html"
-    login_url = "/oidc/authenticate/"
+    login_url = settings.LOGIN_URL
     success_url = "/view-profiles/"
     form_class = UserProfileForm
 

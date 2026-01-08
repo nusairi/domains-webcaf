@@ -73,6 +73,12 @@ resource "azurerm_key_vault_secret" "oidc_client_secret" {
   key_vault_id = azurerm_key_vault.main.id
 }
 
+resource "azurerm_key_vault_secret" "oidc_client_assertion_private_key" {
+  name         = "oidc-client-assertion-private-key"
+  value        = var.oidc_client_assertion_private_key
+  key_vault_id = azurerm_key_vault.main.id
+}
+
 resource "azurerm_postgresql_flexible_server" "main" {
   name                   = var.name_prefix
   resource_group_name    = azurerm_resource_group.main.name
@@ -118,6 +124,12 @@ resource "azurerm_container_app_environment" "main" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 }
 
+resource "azurerm_user_assigned_identity" "container" {
+  name                = "${var.name_prefix}-app-mi"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+}
+
 resource "azurerm_container_app" "main" {
   name                         = var.webapp_name
   resource_group_name          = azurerm_resource_group.main.name
@@ -125,12 +137,13 @@ resource "azurerm_container_app" "main" {
   revision_mode                = "Single"
 
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.container.id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = "System"
+    identity = azurerm_user_assigned_identity.container.id
   }
 
   secret {
@@ -148,15 +161,20 @@ resource "azurerm_container_app" "main" {
     value = azurerm_key_vault_secret.oidc_client_secret.value
   }
 
+  secret {
+    name  = "oidc-client-assertion-private-key"
+    value = azurerm_key_vault_secret.oidc_client_assertion_private_key.value
+  }
+
   template {
     container {
       name   = "webcaf"
-      image  = "${azurerm_container_registry.main.login_server}/webcaf:latest"
+      image  = var.container_image != null && var.container_image != "" ? var.container_image : "${azurerm_container_registry.main.login_server}/webcaf:latest"
       cpu    = 0.5
       memory = "1Gi"
 
       command = ["/bin/sh", "-c"]
-      args    = ["python manage.py migrate && gunicorn webcaf.wsgi:application --bind 0.0.0.0:8000 --timeout 120 --access-logfile -"]
+      args    = ["gunicorn webcaf.wsgi:application --bind 0.0.0.0:8000 --timeout 120 --access-logfile -"]
 
       env {
         name  = "DJANGO_SETTINGS_MODULE"
@@ -175,7 +193,7 @@ resource "azurerm_container_app" "main" {
 
       env {
         name  = "SSO_MODE"
-        value = "external"
+        value = var.sso_mode
       }
 
       env {
@@ -210,32 +228,67 @@ resource "azurerm_container_app" "main" {
 
       env {
         name  = "OIDC_OP_AUTHORIZATION_ENDPOINT"
-        value = "https://login.microsoftonline.com/2062bf1d-f9d8-4916-afd0-ca3624f1b2be/oauth2/v2.0/authorize"
+        value = var.oidc_op_authorization_endpoint
       }
 
       env {
         name  = "OIDC_OP_TOKEN_ENDPOINT"
-        value = "https://login.microsoftonline.com/2062bf1d-f9d8-4916-afd0-ca3624f1b2be/oauth2/v2.0/token"
+        value = var.oidc_op_token_endpoint
       }
 
       env {
         name  = "OIDC_OP_USER_ENDPOINT"
-        value = "https://graph.microsoft.com/oidc/userinfo"
+        value = var.oidc_op_user_endpoint
       }
 
       env {
         name  = "OIDC_OP_JWKS_ENDPOINT"
-        value = "https://login.microsoftonline.com/2062bf1d-f9d8-4916-afd0-ca3624f1b2be/discovery/v2.0/keys"
+        value = var.oidc_op_jwks_endpoint
       }
 
       env {
         name  = "OIDC_OP_LOGOUT_ENDPOINT"
-        value = "https://login.microsoftonline.com/2062bf1d-f9d8-4916-afd0-ca3624f1b2be/oauth2/v2.0/logout"
+        value = var.oidc_op_logout_endpoint
       }
 
       env {
         name  = "ENABLED_2FA"
         value = "False"
+      }
+
+      env {
+        name  = "OIDC_RP_SCOPES"
+        value = var.oidc_rp_scopes
+      }
+
+      env {
+        name  = "OIDC_RP_SIGN_ALGO"
+        value = var.oidc_rp_sign_algo
+      }
+
+      env {
+        name  = "OIDC_TOKEN_AUTH_METHOD"
+        value = var.oidc_token_auth_method
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_PRIVATE_KEY"
+        secret_name = "oidc-client-assertion-private-key"
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_KID"
+        value = var.oidc_client_assertion_kid
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_ALG"
+        value = var.oidc_client_assertion_alg
+      }
+
+      env {
+        name  = "OIDC_USER_AGENT"
+        value = var.oidc_user_agent
       }
 
       env {
@@ -260,10 +313,194 @@ resource "azurerm_container_app" "main" {
       percentage      = 100
     }
   }
+
+  depends_on = [azurerm_role_assignment.acr_pull]
+}
+
+resource "azurerm_container_app_job" "migrate" {
+  name                         = "${var.name_prefix}-migrate"
+  resource_group_name          = azurerm_resource_group.main.name
+  location                     = azurerm_resource_group.main.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  replica_timeout_in_seconds   = 1800
+
+  manual_trigger_config {
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.container.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.container.id
+  }
+
+  secret {
+    name  = "django-secret-key"
+    value = azurerm_key_vault_secret.django_secret_key.value
+  }
+
+  secret {
+    name  = "database-url"
+    value = azurerm_key_vault_secret.database_url.value
+  }
+
+  secret {
+    name  = "oidc-client-secret"
+    value = azurerm_key_vault_secret.oidc_client_secret.value
+  }
+
+  secret {
+    name  = "oidc-client-assertion-private-key"
+    value = azurerm_key_vault_secret.oidc_client_assertion_private_key.value
+  }
+
+  template {
+    container {
+      name   = "migrate"
+      image  = var.container_image != null && var.container_image != "" ? var.container_image : "${azurerm_container_registry.main.login_server}/webcaf:latest"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      command = ["/bin/sh", "-c"]
+      args    = ["python manage.py migrate --noinput"]
+
+      env {
+        name  = "DJANGO_SETTINGS_MODULE"
+        value = "webcaf.settings"
+      }
+
+      env {
+        name  = "DEBUG"
+        value = "False"
+      }
+
+      env {
+        name  = "ENVIRONMENT"
+        value = "prod"
+      }
+
+      env {
+        name  = "SSO_MODE"
+        value = var.sso_mode
+      }
+
+      env {
+        name  = "ALLOWED_HOSTS"
+        value = var.domain_name
+      }
+
+      env {
+        name  = "DOMAIN_NAME"
+        value = var.domain_name
+      }
+
+      env {
+        name  = "LOGOUT_REDIRECT_URL"
+        value = "https://${var.domain_name}/"
+      }
+
+      env {
+        name  = "USE_X_FORWARDED_HOST"
+        value = "True"
+      }
+
+      env {
+        name  = "OIDC_RP_CLIENT_ID"
+        value = var.oidc_client_id
+      }
+
+      env {
+        name        = "OIDC_RP_CLIENT_SECRET"
+        secret_name = "oidc-client-secret"
+      }
+
+      env {
+        name  = "OIDC_OP_AUTHORIZATION_ENDPOINT"
+        value = var.oidc_op_authorization_endpoint
+      }
+
+      env {
+        name  = "OIDC_OP_TOKEN_ENDPOINT"
+        value = var.oidc_op_token_endpoint
+      }
+
+      env {
+        name  = "OIDC_OP_USER_ENDPOINT"
+        value = var.oidc_op_user_endpoint
+      }
+
+      env {
+        name  = "OIDC_OP_JWKS_ENDPOINT"
+        value = var.oidc_op_jwks_endpoint
+      }
+
+      env {
+        name  = "OIDC_OP_LOGOUT_ENDPOINT"
+        value = var.oidc_op_logout_endpoint
+      }
+
+      env {
+        name  = "ENABLED_2FA"
+        value = "False"
+      }
+
+      env {
+        name  = "OIDC_RP_SCOPES"
+        value = var.oidc_rp_scopes
+      }
+
+      env {
+        name  = "OIDC_RP_SIGN_ALGO"
+        value = var.oidc_rp_sign_algo
+      }
+
+      env {
+        name  = "OIDC_TOKEN_AUTH_METHOD"
+        value = var.oidc_token_auth_method
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_PRIVATE_KEY"
+        secret_name = "oidc-client-assertion-private-key"
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_KID"
+        value = var.oidc_client_assertion_kid
+      }
+
+      env {
+        name  = "OIDC_CLIENT_ASSERTION_ALG"
+        value = var.oidc_client_assertion_alg
+      }
+
+      env {
+        name  = "OIDC_USER_AGENT"
+        value = var.oidc_user_agent
+      }
+
+      env {
+        name        = "SECRET_KEY"
+        secret_name = "django-secret-key"
+      }
+
+      env {
+        name        = "DATABASE_URL"
+        secret_name = "database-url"
+      }
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.acr_pull]
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
   scope                = azurerm_container_registry.main.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.main.identity[0].principal_id
+  principal_id         = azurerm_user_assigned_identity.container.principal_id
 }

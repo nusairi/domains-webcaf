@@ -177,3 +177,13 @@ webcaf/static
 # Terraform state
 infra/terraform/terraform.tfstate
 infra/terraform/terraform.tfstate.backup
+
+# Secrets/keys
+*.pem
+kv_private.pem
+*.key
+*.jwk
+*.jwks
+# Terraform state (local)
+infra/terraform/terraform.tfstate*
+
