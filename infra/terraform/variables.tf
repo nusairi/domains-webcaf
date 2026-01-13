@@ -45,7 +45,8 @@ variable "container_image" {
 }
 
 variable "oidc_client_id" {
-  type = string
+  type      = string
+  sensitive = true
 }
 
 variable "oidc_client_secret" {
@@ -60,8 +61,9 @@ variable "oidc_client_assertion_private_key" {
 }
 
 variable "oidc_client_assertion_kid" {
-  type    = string
-  default = ""
+  type      = string
+  sensitive = true
+  default   = ""
 }
 
 variable "oidc_op_authorization_endpoint" {

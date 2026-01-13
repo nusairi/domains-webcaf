@@ -1,0 +1,18 @@
+resource_group_name            = "<RG_NAME>"
+name_prefix                    = "<NAME_PREFIX>"
+webapp_name                    = "<APP_NAME>"
+domain_name                    = "<APP_FQDN>"
+
+# SSO/OIDC configuration
+sso_mode                       = "external"
+oidc_op_authorization_endpoint = "<AUTHORIZATION_ENDPOINT>"
+oidc_op_token_endpoint         = "<TOKEN_ENDPOINT>"
+oidc_op_user_endpoint          = "<USERINFO_ENDPOINT>"
+oidc_op_jwks_endpoint          = "<JWKS_ENDPOINT>"
+oidc_op_logout_endpoint        = "<LOGOUT_ENDPOINT>"
+oidc_rp_scopes                 = "openid email"
+oidc_rp_sign_algo              = "ES256"
+oidc_token_auth_method         = "private_key_jwt"
+oidc_client_assertion_kid      = "<KEY_ID>"
+oidc_client_assertion_alg      = "RS256"
+oidc_user_agent                = "<USER_AGENT>"

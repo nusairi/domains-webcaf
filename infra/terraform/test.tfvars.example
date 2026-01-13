@@ -1,0 +1,4 @@
+resource_group_name = "<RG_NAME>"
+name_prefix         = "<NAME_PREFIX>"
+webapp_name         = "<APP_NAME>"
+domain_name         = "<APP_FQDN>"

@@ -187,3 +187,7 @@ kv_private.pem
 # Terraform state (local)
 infra/terraform/terraform.tfstate*
 
+# Terraform variable files (local)
+*.tfvars
+!.tfvars.example
+

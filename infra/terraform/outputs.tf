@@ -15,7 +15,8 @@ output "postgres_admin_username" {
 }
 
 output "postgres_admin_password_secret_id" {
-  value = azurerm_key_vault_secret.postgres_admin_password.id
+  value     = azurerm_key_vault_secret.postgres_admin_password.id
+  sensitive = true
 }
 
 output "container_app_fqdn" {
